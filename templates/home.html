@@ -1,0 +1,17 @@
+<html>
+<head>
+
+<title>Flask Course</title>
+<!-- This is comment -->
+{# This page disaply the webpage #}
+<h1>Welocme FLASK Learning Course</h1>
+<h3>{{name | title}}</h3>
+<h3>{{course | capitalize}}</h3>
+{# <h3>{{price+ price*0.1 | float}}</h3> #}
+<ul>
+{% for key,item in data.items() %}
+<li>	{{loop.index}} {{key}} - {{item}} </li>
+{% endfor %}
+</ul>
+</head>
+</html>
