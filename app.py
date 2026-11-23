@@ -1,8 +1,12 @@
 from flask import Flask, render_template,request, redirect , url_for, flash, session
-
+import os
+from dotenv import load_dotenv
 app = Flask(__name__)
-app.secret_key = "change_on_production"
+load_dotenv()
 
+app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
+UPLOAD_FOLDER ="uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok = True)
 @app.route("/")
 def index():
 	return render_template("index.html")
@@ -60,7 +64,18 @@ def dashboard():
 def logout():
 	session.pop("username",None)
 	return f"Logout successfully !!" 
-
+#Upload file code
+@app.route("/upload",methods=["GET","POST"])
+def upload():
+	if request.method == "POST":
+		file =  request.files.get("file")
+		if not file:
+			return "Please upload file first"
+		if file.filename =="":
+			return "Please upload file as filename is not there"
+		file.save(os.path.join(UPLOAD_FOLDER , file.filename))
+		return "File uploaded successfully"
+	return render_template("upload.html")
 
 if __name__ == "__main__":
-	app.run(debug = True)
+	app.run(debug = os.getenv("debug"))
