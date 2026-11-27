@@ -1,153 +1,163 @@
-from flask import Flask , request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-import os
-from dotenv import load_dotenv
-from sqlalchemy import text
-from urllib.parse import quote_plus
+from flask import Flask ,  request,  jsonify
+from pymongo import MongoClient
+from bson import ObjectId
+import re
 
-load_dotenv()
 app = Flask(__name__)
-DB_USERNAME = os.getenv("DB_USERNAME")
-DB_PASSWORD = quote_plus(os.getenv("DB_PASSWORD"))
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
 
-DATABASE_URL = "mysql+pymysql://"+f"{DB_USERNAME}:{DB_PASSWORD}"+f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-db = SQLAlchemy(app)
+client = MongoClient("mongodb://localhost:27017")
+client.admin.command("ping")  # coommand to check mongo db connected successfully
+print("Mongo Db connected successfully")
+db = client["flask_db"]
+users_collection = db["users"]
 
 @app.route("/")
 def home():
-	return "Welcome Flask Course"
-
-
-@app.route("/db-test")
-def db_test():
-	result = db.session.execute(text("SELECT 1"))
-	value = result.scalar()
-	return f"Database setup completed !! Result : {value}"
-			   	
-class User(db.Model):
-	__tablename__ = "user"
-	id = db.Column(db.Integer, primary_key = True)
-	name = db.Column(db.String(50), nullable = False)
-	email = db.Column(db.String(50), nullable=False)
-	age = db.Column(db.Integer)
-	orders = db.relationship("Order", backref="user", lazy= True)
-
-class Order(db.Model):
-	__tablename__ = "order"
-	id = db.Column(db.Integer, primary_key= True)
-	product = db.Column(db.String(50), nullable = False)
-	price = db.Column(db.Float, nullable= False)
-	user_id = db.Column(db.Integer, db.ForeignKey('user.id'),nullable=False)
-
-@app.route("/create-user", methods = ["POST"])
+    return "welcome flask Mongo tutorial!!"
+# CRUD Operation
+@app.route("/add", methods=["POST"])
 def create_user():
-	data = request.get_json()
-	user = User(name = data.get("name"), email = data.get("email") , age= data.get("age"))
-	db.session.add(user)
-	db.session.commit()
-	return "User created successfully"
+    data = request.get_json()
+    result = users_collection.insert_one(data)
+    return jsonify({"message":"User created successfully",
+                    "id" : str(result.inserted_id)}), 201
 
-@app.route("/users", methods = ["GET"])
-def users():
-	users = User.query.all()
-	user_data = []
-	for user in users:
-		user_data.append({"name": user.name , "email":user.email , "age" : user.age})
-	return jsonify({"User Details": user_data})
+@app.route("/add/bulk", methods = ["POST"])
+def create_user_bulk():
+    data = request.get_json()
+    result= users_collection.insert_many(data)
+    ids = [str(user_id) for user_id in result.inserted_ids]
+    return jsonify({"Message":"Bulk users created successfully!!",
+                    "ids":ids
+                    }) , 201
 
-@app.route("/order", methods = ["POST"])
-def order():
-	data = request.get_json()
-	order = Order(product = data.get("product") , price = data.get("price") , user_id = data.get("user_id"))
-	db.session.add(order)
-	db.session.commit()
-	return "Order created successfully !!"
+@app.route("/users", methods= ["GET"])
+def get_users():
+    users = users_collection.find()
+    user_data =[]
+    for user in users:
+        user_data.append({
+            "id" : str(user["_id"]),
+            "name":user["name"],
+            "age": user["age"],
+            "email":user["email"],
+            "city": user["city"]
+            })
+    return jsonify(user_data), 200
 
-@app.route("/orders", methods=["GET"])
-def get_orders():
-	orders = Order.query.all()
-	order_data = []
-	for order in orders:
-		order_data.append({"product": order.product , "price": order.price, "user_id":order.user_id})
-	return jsonify({"Order Details":order_data})
+@app.route("/user/one", methods=["GET"])
+def get_one_user():
+    user = users_collection.find_one()
+    if user is None:
+        return jsonify({"message":"user is not found"}) , 404
+    return jsonify({
+        "id" : str(user["_id"]),
+        "name" : user["name"],
+        "email" : user["email"],
+        "age" : user["age"]
+    }), 200
 
-# Below method important
-# Get order by user id
-@app.route("/user/<int:user_id>/orders" ,  methods=["GET"])
-def get_orders_by_users(user_id):
-	user = db.get_or_404(User, user_id)
-	orders = user.orders
-	order_data = []
-	for order in orders:
-		order_data.append({"id":order.id, "product":order.product , "price":order.price, "user_id":order.user_id})
-	return jsonify({"user":user.name , "Order details":order_data})
+@app.route("/user/<user_id>", methods=["GET"])
+def get_user(user_id):
+    user= users_collection.find_one({
+        "_id":ObjectId(user_id)
+    })
+    if user is None:
+        return jsonify({"message":"User not found for given user id"}),404
+    return jsonify({"id":str(user["_id"]),
+                    "name":user["name"],
+                    "age":user["age"],
+                    "email":user["email"]
+                    }),200
+@app.route("/user/<user_id>", methods=["PUT"])
+def update_one_user(user_id):
+    user_id =  ObjectId(user_id)
+    data = request.get_json()
+    result = users_collection.update_one(
+        {"_id" : user_id},
+        {
+            "$set":{
+                "name": data.get("name"),
+                "age": data.get("age"),
+                "email":data.get("email")
+                    }
+        }
+        )
+    if result.matched_count==0:
+        return jsonify({"message":"user not found"}),404
+    return jsonify({
+        "message":"user updated successfully!!"
+    })
+@app.route("/user/partial/all",methods=["PATCH"])
+def update_all_users_partial():
+    result = users_collection.update_many(
+        {},
+        {"$set": {"city": "Delhi"}}
+    )
+    if result.matched_count == 0:
+        return jsonify({"message":"user is not found"}),404
+    return jsonify({"message":"user updated successfully"})
 
-# filter method
-@app.route("/users/filter", methods=["GET"])
-def filter_users():
-	age = request.args.get("age")         
-	# Filter conditions  filter by age
+#Partial update using Patch
+@app.route("/user/partial/<user_id>", methods=["PATCH"])
+def partial_update_one_user(user_id):
+    user_id = ObjectId(user_id)
+    data = request.get_json()
+    update_data = {}
+    if "name" in data:
+        update_data["name"] = data["name"]
+    if "email" in data:
+        update_data["email"] = data["email"]
+    if "age" in data:
+        update_data["age"] = data["age"]   
+    if "city" in data:
+        update_data["city"] = data["city"]   
+    result = users_collection.update_one(
+        {"_id":user_id},
+        {
+            "$set":update_data
+            
+        })
+    if result.matched_count ==0:
+        return jsonify({"message":"user is not found"}),404
+    return jsonify({"message":"user updated successfully!!"}), 200
 
-	#users = User.query.filter(User.age > age).all()
-	#users = User.query.filter(User.age > age, User.name=="sonal").all()  # for multiple and condition
-	
-	# like conditions
+@app.route("/user/<user_id>",methods=["DELETE"])
+def delete_user(user_id):
+    result = users_collection.delete_one(
+        {"_id":ObjectId(user_id)})
+    if result.deleted_count ==0:
+        return jsonify({"message":"user not found"}),404
+    return jsonify({"message":"user deleted successfully"}),200
 
-	#users = User.query.filter(User.name.like("%h")).all() # for like condition endswith h
-	#users = User.query.filter(User.name.like("s%")).all()  # like condition startswith s
-	#users = User.query.filter(User.email.like("%gmail.com%")).all() # filter on gmail.com in between email string
-	
-	# Orderby conditions
-	#users = User.query.order_by(User.age.desc()).all()  # descending age
-	#users = User.query.order_by(User.age.asc()).all()    # ascending age
+@app.route("/user/search", methods=["GET"])
+def search_user():
+    city = request.args.get("city", "").strip()
+    if not city:
+        return jsonify({"message": "City query parameter is required"}), 400
 
-	# filter and order by condition
-	users =  User.query.filter(User.age >25).order_by(User.age.desc()).all()
+    users = users_collection.find({
+        #"city": city
+        #"age": {"$gte": 41},
+        #"age" : {"$gte": 41},
+        #"city" :{"$in":["Delhi"]}
+        #"city" :{"$nin":["Delhi"]}
+        #"$and":[{"age": {"$gte": 38}}, {"name": "sonal"}]
+        #"phone":{"$exists":True}
+        "name":{"$regex":"so","$options":"i"}
 
-	users_data = []
-	for user in users:
-		users_data.append({'id':user.id,'name':user.name,'email':user.email,'age':user.age})
-	return jsonify(users_data)
-
-# join of two table
-# Get users with orders details
-@app.route("/users/orders", methods = ["GET"])
-def get_users_orders():
-	result = db.session.query(
-		User.name,
-		Order.product,
-		Order.price
-	).join(
-		Order,
-		User.id == Order.user_id
-	) 
-	details = []
-	for name ,  product, amount in result:
-		details.append({"name":name , "product":product , "price":amount})
-	return jsonify(details)
-
-# below code for pagination
-@app.route("/users_page", methods=["GET"])
-def get_users_per_page():
-	page = request.args.get('page',1,type=int)
-	per_page = request.args.get('per_page',2, type=int)
-	pagination = User.query.paginate(page=page, per_page=per_page)
-	users = pagination.items
-	data = []
-	for user in users:
-		data.append({"id":user.id, "name":user.name,"email":user.email, "age":user.age})
-	return jsonify({
-		"Total Page":pagination.total,
-		"Pages":pagination.pages,
-		"Page": pagination.page,
-		"Per Page":pagination.per_page,
-		"users":data})
-
-if __name__ =="__main__":
-	with app.app_context():
-		db.create_all()
-	app.run(debug = True)
+    })
+    user_data = []
+    for user in users:
+        user_data.append({
+            "id": str(user["_id"]),
+            "name": user["name"],
+            "age": user["age"],
+            "email": user["email"],
+            "city": user["city"]
+        })
+    if not user_data:
+        return jsonify({"message": "No users found for the given city"}), 404
+    return jsonify(user_data), 200
+if __name__=="__main__":
+    app.run(debug=True)
